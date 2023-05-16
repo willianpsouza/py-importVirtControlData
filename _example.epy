@@ -1,0 +1,151 @@
+#!/usr/bin/env python
+
+# -*- coding: utf-8 -*-
+
+import sys
+import json
+import re
+import subprocess
+import time
+import requests
+import psutil
+
+def main():
+    domainNames = []
+    vms = subprocess.Popen(['virsh', 'list', '--name'],stdout=subprocess.PIPE).communicate()[0]
+    for c in vms.splitlines():
+        domainNames.append(c.decode('utf-8'))
+    maquinas = {}
+    '''LISTANDO OS DOMINIOS QUE ESTAO RODANDO'''
+    for b in range(3):
+        for c in domainNames:
+            if(re.match(r'^$',c)): continue            
+            itens = {}
+            vmnprocessid = get_ProcessID(c)
+            hostcpusage = get_CpuUsageByProcessID(vmnprocessid)
+            hostmemousage = get_MemoryByProcessID(vmnprocessid)
+            procdetail = get_ExtendedInfoByProcessID(vmnprocessid)
+            itens['clock']              = time.time()
+            itens['processid']          = vmnprocessid
+            itens['host_cpu_usage']     = hostcpusage
+            itens['host_memory_usage']  = hostmemousage
+            itens['context_switch']     = procdetail['context_switch']
+            itens['memory_peak']        = procdetail['memopeak']
+            itens['swap_process']       = procdetail['swap_process']
+            output = subprocess.Popen(['virsh', 'domstats', c],stdout=subprocess.PIPE).communicate()[0]
+            lines = []
+            for d in output.splitlines():
+                lines.append(d.decode('utf-8'))
+            for line in lines:
+                if re.search(r'^\s',line):
+                    dados=re.split("=",line)
+                    item = dados[0].strip()
+                    valor = dados[1].strip()
+                    itens[item] = valor            
+            if b == 0:
+                maquinas[c] = itens
+            else:
+                maquinas[c] = pArray(itens,maquinas[c])
+        time.sleep(0.2)
+    sdata=json.dumps(maquinas)
+    send_data_api(sdata)
+
+def get_ProcessID(vmname):
+    ##### PATH PARA O PID DO PROCESSO
+    processpath=("/var/run/libvirt/qemu/%s.pid" % (vmname.strip()))
+    f = open(processpath,'r')
+    processid=f.read()
+    f.close()
+    return processid.strip()
+
+def get_CpuUsageByProcessID(processid):
+    p = psutil.Process(int(processid))
+    vutcpu=p.cpu_percent(0.1)
+    return vutcpu
+
+def get_MemoryByProcessID(processid):
+    p = psutil.Process(int(processid))
+    raminuse = p.memory_info()[0] / float(2 ** 20)
+    return raminuse
+
+def get_ExtendedInfoByProcessID(processid):
+    dret = {}
+    ##### PATH PARA AS INFORMACOES DE MEMORIA DO PROCESSO
+    processpath=("/proc/%s/status" % (processid))
+    f = open(processpath,'r')
+    f1=f.readlines()
+    for line in f1:
+        dados=re.split("\s+",line)
+        if(re.search(r'^VmSwap',dados[0])):
+            memory_swap=float(float(dados[1]*1)*1024)
+        if(re.search(r'^VmPeak',dados[0])):
+            memory_peak=float(float(dados[1]*1)*1024)
+        if(re.search(r'ctxt_switches',dados[0])):
+            context_switch=int(dados[1]*1)
+    f.close()    
+    dret['swap_process']=memory_swap
+    dret['memopeak']=memory_peak
+    dret['context_switch']=context_switch
+    return dret
+
+def pArray(data01,data02):
+    tms = data01['clock'] - data02['clock']
+    for c in data01:
+        if(re.search(r'^(block|net)',c)):
+
+            if re.search(r'^(net\.[0-9]\.tx\.pkts)',c) and c in data01.keys() and c in data02.keys():
+                net_tx_pkts=(int(data01[c]) - int(data02[c]))/tms
+
+            if re.search(r'^(net\.[0-9]\.rx\.pkts)',c) and c in data01.keys() and c in data02.keys():
+                net_rx_pkts=(int(data01[c]) - int(data02[c]))/tms
+
+            if re.search(r'^(net\.[0-9]\.tx\.bytes)',c) and c in data01.keys() and c in data02.keys():
+                net_tx_bytes=(int(data01[c]) - int(data02[c]))/tms
+            
+            if re.search(r'^(net\.[0-9]\.rx\.bytes)',c) and c in data01.keys() and c in data02.keys():
+                net_rx_bytes=(int(data01[c]) - int(data02[c]))/tms
+
+            if re.search(r'^(block\.[0-9]\.rd\.reqs)',c) and c in data01.keys() and c in data02.keys():
+                block_rd_reqs=(int(data01[c]) - int(data02[c]))/tms
+            
+            if re.search(r'^(block\.[0-9]\.wr\.reqs)',c) and c in data01.keys() and c in data02.keys():
+                block_wr_reqs=(int(data01[c]) - int(data02[c]))/tms
+
+            if re.search(r'^(block\.[0-9]\.rd\.bytes)',c) and c in data01.keys() and c in data02.keys():
+                block_rd_bytes=(int(data01[c]) - int(data02[c]))/tms
+
+            if re.search(r'^(block\.[0-9]\.wr\.bytes)',c) and c in data01.keys() and c in data02.keys():
+                block_wr_bytes=(int(data01[c]) - int(data02[c]))/tms
+
+        if re.search(r'^(context_switch)',c) and c in data01.keys() and c in data02.keys():
+            context_switch=(int(data01[c]) - int(data02[c]))/tms
+
+
+    data01['net_tx_pkts']=net_tx_pkts
+    data01['net_rx_pkts']=net_rx_pkts
+    data01['net_tx_bytes']=net_tx_bytes
+    data01['net_rx_bytes']=net_rx_bytes
+
+    data01['block_rd_reqs']=block_rd_reqs
+    data01['block_wr_reqs']=block_wr_reqs
+
+    data01['block_rd_bytes']=block_rd_bytes
+    data01['block_wr_bytes']=block_wr_bytes
+    data01['context_switch_per_sec']=context_switch
+    return data01
+
+def send_data_api(data):
+    imprimir = {'dados' :data}
+    url = "http://10.16.31.2/bdc1030fc7da03830de237598652ee91/RECJSON/"
+    resp = requests.post(url,data=imprimir)
+    if resp.status_code == 200:
+        return True
+    else:
+        print(resp.text)
+    return False
+
+try:
+	main()
+	sys.exit()
+except KeyboardInterrupt:
+	pass
