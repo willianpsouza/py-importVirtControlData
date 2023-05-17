@@ -25,7 +25,7 @@ RETRY_TIMES=int(os.getenv('RETRY_TIMES', '5'))
 PROCESS_WAIT=int(os.getenv('PROCESS_WAIT', '5'))
 DATE_INI=os.getenv('DATE_INI', '2023-05-16 07:12:00')
 UNIXDAY = 86400
-NOW = int(time)
+NOW = int(time())
 
 
 
