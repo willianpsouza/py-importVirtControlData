@@ -1,12 +1,16 @@
+#!/usr/bin/python
 
+'''
+    execute data send
+'''
 
 from datetime import datetime
 from time import sleep
 
-import pymysql.cursors
+import os
 import multiprocessing as mpc
 import requests
-import os
+import pymysql.cursors
 
 
 API_HTTP_HOST=os.getenv('API_HTTP_HOST','http://127.0.0.1:3001')
@@ -15,10 +19,14 @@ DBHOST=os.getenv('DBHOST','localhost')
 DBUSER=os.getenv('DBUSER','dbuser')
 DBPASS=os.getenv('DBPASS','dbpass')
 DBNAME=os.getenv('DBNAME','dbname')
-TPROCS=int(os.getenv('TPROCS', 8))
+TPROCS=int(os.getenv('TPROCS', '8'))
+WAIT_TIMEOUT=int(os.getenv('WAIT_TIMEOUT', '30'))
+RETY_TIMES=int(os.getenv('RETRY_TIMES', '5'))
 
 
-def senddata(data):
+
+def send_data(data):
+    ''' send data do backend'''
     S = requests.Session()
     _url = f'{API_HTTP_HOST}/v1/virt_control/vmData'
     _p = S.post(_url, json=data)
@@ -27,17 +35,25 @@ def senddata(data):
     else:
         return False
 
-def senddatamass(data):
+def send_data_mass(data):
+    ''' send data do backend'''
     S = requests.Session()
     _url = f'{API_HTTP_HOST}/v1/virt_control/vmMassData'
-    _p = S.post(_url, json={'data': data})
+    total = 0
 
-    if _p.ok:
-        return True
-    else:
-        return False
+    while total <= RETY_TIMES:
+        try:
+            _p = S.post(_url, json={'data': data})
+            if _p.ok:
+                return True
+        except Exception:
+            sleep(WAIT_TIMEOUT)
+        finally:
+            total += 1
+    return False
 
-def generatedaterange():
+def generate_date_range():
+    ''' generating date ranges to be processes'''
     date_ini = int(datetime.timestamp(datetime.strptime('2023-02-15 00:00:00', "%Y-%m-%d %H:%M:%S")))
     date_acctual = date_ini
     total_sum = 300
@@ -51,14 +67,16 @@ def generatedaterange():
     return ret
 
 def main():
-
+    ''' 
+    main thread
+    '''
     connection = pymysql.connect(host=DBHOST,
                                 user=DBUSER,
                                 password=DBPASS,
                                 database=DBNAME,
                                 cursorclass=pymysql.cursors.DictCursor)
     
-    daterange = generatedaterange()
+    daterange = generate_date_range()
     totalrange = len(daterange)
     string_print = "%04d/%04d -- Executando data: %s Total de registros: %d -- Processos ativos %02d"
     seq = 0
@@ -90,8 +108,8 @@ def main():
             for result in results:
                 mdata.append(result)
                 
-            t = mpc.Process(target=senddatamass, args=([mdata]))
-            t.start()
+            __t = mpc.Process(target=send_data_mass, args=([mdata]))
+            __t.start()
 
         seq += 1
 
