@@ -21,7 +21,7 @@ DBPASS=os.getenv('DBPASS','dbpass')
 DBNAME=os.getenv('DBNAME','dbname')
 TPROCS=int(os.getenv('TPROCS', '8'))
 WAIT_TIMEOUT=int(os.getenv('WAIT_TIMEOUT', '30'))
-RETY_TIMES=int(os.getenv('RETRY_TIMES', '5'))
+RETRY_TIMES=int(os.getenv('RETRY_TIMES', '5'))
 
 
 
@@ -41,7 +41,7 @@ def send_data_mass(data):
     _url = f'{API_HTTP_HOST}/v1/virt_control/vmMassData'
     total = 0
 
-    while total <= RETY_TIMES:
+    while total <= RETRY_TIMES:
         try:
             _p = S.post(_url, json={'data': data})
             if _p.ok:
