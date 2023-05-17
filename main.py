@@ -5,7 +5,7 @@
 '''
 
 from datetime import datetime
-from time import sleep
+from time import sleep, time
 
 import os
 import multiprocessing as mpc
@@ -22,14 +22,18 @@ DBNAME=os.getenv('DBNAME','dbname')
 TPROCS=int(os.getenv('TPROCS', '8'))
 WAIT_TIMEOUT=int(os.getenv('WAIT_TIMEOUT', '30'))
 RETRY_TIMES=int(os.getenv('RETRY_TIMES', '5'))
+PROCESS_WAIT=int(os.getenv('PROCESS_WAIT', '5'))
+DATE_INI=os.getenv('DATE_INI', '2023-05-16 07:12:00')
+UNIXDAY = 86400
+NOW = int(time)
 
 
 
 def send_data(data):
     ''' send data do backend'''
-    S = requests.Session()
+    _s = requests.Session()
     _url = f'{API_HTTP_HOST}/v1/virt_control/vmData'
-    _p = S.post(_url, json=data)
+    _p = _s.post(_url, json=data)
     if _p.ok:
         return True
     else:
@@ -37,67 +41,64 @@ def send_data(data):
 
 def send_data_mass(data):
     ''' send data do backend'''
-    S = requests.Session()
+    _s = requests.Session()
     _url = f'{API_HTTP_HOST}/v1/virt_control/vmMassData'
     total = 0
 
     while total <= RETRY_TIMES:
         try:
-            _p = S.post(_url, json={'data': data})
+            _p = _s.post(_url, json={'data': data})
             if _p.ok:
                 return True
-        except Exception:
-            sleep(WAIT_TIMEOUT)
+        except Exception as _e:
+            sleep(PROCESS_WAIT)
         finally:
             total += 1
     return False
 
 def generate_date_range():
     ''' generating date ranges to be processes'''
-    date_ini = int(datetime.timestamp(datetime.strptime('2023-02-15 00:00:00', "%Y-%m-%d %H:%M:%S")))
+    date_ini = int(datetime.timestamp(datetime.strptime(DATE_INI, "%Y-%m-%d %H:%M:%S")))
     date_acctual = date_ini
     total_sum = 300
     days = 90
-    UNIXDAY = 86400
     total_ranges = int((UNIXDAY * days)/total_sum)
     ret = []
     for _ in range(total_ranges):
         ret.append((int(date_acctual), int(date_acctual+total_sum)))
         date_acctual += total_sum + 1
+        if date_acctual > NOW:
+            return ret
     return ret
 
 def main():
-    ''' 
-    main thread
-    '''
+    '''     main thread     '''
     connection = pymysql.connect(host=DBHOST,
                                 user=DBUSER,
                                 password=DBPASS,
                                 database=DBNAME,
                                 cursorclass=pymysql.cursors.DictCursor)
-    
+
     daterange = generate_date_range()
     totalrange = len(daterange)
     string_print = "%04d/%04d -- Executando data: %s Total de registros: %d -- Processos ativos %02d"
     seq = 0
 
     for date_ini,date_end in daterange:
-
         t_actives = len(mpc.active_children())
         mdata = []
-
         while True:
             if len(mpc.active_children()) < TPROCS:
                 print("")
                 break
-            print(".",end="")
-            sleep(5)
+            print(".", end="")
+            sleep(PROCESS_WAIT)
 
 
         with connection.cursor() as cursor:
             
             sql = "select * from virt_manager_data  where clock >= %s and clock <= %s and host is not null;"
-            cursor.execute(sql, (date_ini,date_end) )
+            cursor.execute(sql, (date_ini,date_end))
             results = cursor.fetchall()
             totalresults = len(results)
             if totalresults == 0:
